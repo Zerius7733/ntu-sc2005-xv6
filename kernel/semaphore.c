@@ -62,10 +62,14 @@ sem_wait(int semid)
   if(semid < 0 || semid >= MAX_SEMAPHORES || !semaphores[semid].in_use)
     return -1;
  
-  // TODO Retrieve semaphore: uncomment below
-  // struct semaphore *sem = &semaphores[semid];
-  // TODO sleep while semaphore is zero
-  // TODO decrement semaphore value atomically
+  struct semaphore *sem = &semaphores[semid];
+
+  acquire(&sem->lock);
+  while(sem->value == 0) {
+    sleep(sem, &sem->lock);
+  }
+  sem->value--;
+  release(&sem->lock);
   return 0;
 }
 
@@ -75,9 +79,12 @@ sem_signal(int semid)
   if(semid < 0 || semid >= MAX_SEMAPHORES || !semaphores[semid].in_use)
     return -1;
 
-  // TODO Retrieve semaphore: uncomment below
-  // struct semaphore *sem = &semaphores[semid];
-  // TODO increment semaphore value atomically, notifying sleeping processes
+  struct semaphore *sem = &semaphores[semid];
+
+  acquire(&sem->lock);
+  sem->value++;
+  wakeup(sem);
+  release(&sem->lock);
   return 0;
 }
 
@@ -86,6 +93,13 @@ sem_getvalue(int semid)
 {
   if(semid < 0 || semid >= MAX_SEMAPHORES || !semaphores[semid].in_use)
     return -1;
-  // TODO return value of semid atomically
-  return -1;
+
+  struct semaphore *sem = &semaphores[semid];
+  int value;
+
+  acquire(&sem->lock);
+  value = sem->value;
+  release(&sem->lock);
+
+  return value;
 }

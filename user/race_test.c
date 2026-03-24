@@ -29,17 +29,19 @@ void sem_basic() {
 }
 
 void do_work(int pid, int semid) {
+    (void)pid;
     for (int i = 0; i < N; i++) {
-        // TODO: increment a shared counter, making sure to use avoid race condition.
-        // Tip: use a semaphore.
+        sem_wait(semid);
         int val = ucnt_get(0);
         ucnt_set(0, val + 1);
+        sem_signal(semid);
     }
 }
 
 void race_test() {
     ucnt_set(0, 0);
-    int semid = -1; // TODO: create semaphore properly
+    int semid = sem_init(1);
+    T_ASSERT(semid >= 0);
 
     int pid = fork();
     T_ASSERT(pid >= 0);
@@ -59,22 +61,30 @@ void race_test() {
 }    
 
 struct buf_sem {
-    // TODO: add semaphores as required
+    int empty;
+    int full;
+    int mutex;
 };
 
 void consumer(struct buf_sem b, int loops, int valid[]) {
     char tmp;
     for(int i = 0; i < loops; i++) {
-        // TODO: wait buffer slot full and signal empty slot 
+        sem_wait(b.full);
+        sem_wait(b.mutex);
         tmp = ubuf_read();
+        sem_signal(b.mutex);
+        sem_signal(b.empty);
         T_ASSERT(valid[(unsigned char)tmp]);
     }
 }
 
 void producer(const char* msg, struct buf_sem b) {
     for (const char* p = msg; *p != '\0'; p++) {
-        // TODO: wait buffer slot emtpy and signal used slot
+        sem_wait(b.empty);
+        sem_wait(b.mutex);
         ubuf_write(*p);
+        sem_signal(b.mutex);
+        sem_signal(b.full);
     }
 }
 
@@ -89,7 +99,12 @@ void producer_consumer() {
     }
 
     struct buf_sem b;
-    // TODO init semaphores as required
+    b.empty = sem_init(UBUF_SIZE);
+    b.full = sem_init(0);
+    b.mutex = sem_init(1);
+    T_ASSERT(b.empty >= 0);
+    T_ASSERT(b.full >= 0);
+    T_ASSERT(b.mutex >= 0);
 
     for (int i = 0; i < NUM_PROD; i++) {
         int pid = fork();
@@ -105,7 +120,9 @@ void producer_consumer() {
         wait(0);
     }
     printf("[producer_consumer] PASS: message delivered\n");
-    // TODO clean-up semaphores
+    sem_free(b.empty);
+    sem_free(b.full);
+    sem_free(b.mutex);
 }
 
 
