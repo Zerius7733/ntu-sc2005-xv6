@@ -6,6 +6,28 @@
 #include "spinlock.h"
 #include "proc.h"
 
+static int
+count_virtual_pages(struct proc *p)
+{
+  return PGROUNDUP(p->sz) / PGSIZE;
+}
+
+static int
+count_physical_pages(struct proc *p)
+{
+  int count = 0;
+  uint64 va;
+  pte_t *pte;
+
+  for(va = 0; va < p->sz; va += PGSIZE){
+    pte = walk(p->pagetable, va, 0);
+    if(pte && (*pte & PTE_V))
+      count++;
+  }
+
+  return count;
+}
+
 uint64
 sys_exit(void)
 {
@@ -46,6 +68,18 @@ sys_sbrk(void)
   if(growproc(n) < 0)
     return -1;
   return addr;
+}
+
+uint64
+sys_countvp(void)
+{
+  return count_virtual_pages(myproc());
+}
+
+uint64
+sys_countpp(void)
+{
+  return count_physical_pages(myproc());
 }
 
 uint64

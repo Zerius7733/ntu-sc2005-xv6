@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -110,11 +112,20 @@ walkaddr(pagetable_t pagetable, uint64 va)
 {
   pte_t *pte;
   uint64 pa;
+  struct proc *p;
 
   if(va >= MAXVA)
     return 0;
 
   pte = walk(pagetable, va, 0);
+  if(pte && (*pte & PTE_V) == 0 && (*pte & PTE_LAZY) != 0){
+    p = myproc();
+    if(p && p->pagetable == pagetable){
+      if(lazyalloc(p, va) < 0)
+        return 0;
+      pte = walk(pagetable, va, 0);
+    }
+  }
   if(pte == 0)
     return 0;
   if((*pte & PTE_V) == 0)
@@ -185,9 +196,12 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      continue;
+    if((*pte & PTE_V) == 0){
+      if(*pte & PTE_LAZY)
+        *pte = 0;
+      continue;
+    }
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -252,6 +266,30 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       return 0;
     }
   }
+  return newsz;
+}
+
+// Reserve PTEs to grow a process without allocating physical memory.
+uint64
+uvmreserve(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
+{
+  uint64 a;
+  pte_t *pte;
+
+  if(newsz < oldsz)
+    return oldsz;
+
+  oldsz = PGROUNDUP(oldsz);
+  for(a = oldsz; a < newsz; a += PGSIZE){
+    if((pte = walk(pagetable, a, 1)) == 0){
+      uvmdealloc(pagetable, a, oldsz);
+      return 0;
+    }
+    if(*pte & PTE_V)
+      panic("uvmreserve: remap");
+    *pte = PTE_LAZY | PTE_R | PTE_U | xperm;
+  }
+
   return newsz;
 }
 
@@ -320,8 +358,13 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+    if((*pte & PTE_V) == 0){
+      if((*pte & PTE_LAZY) == 0)
+        panic("uvmcopy: page not present");
+      if(uvmreserve(new, i, i + PGSIZE, PTE_FLAGS(*pte) & (PTE_W|PTE_X)) == 0)
+        goto err;
+      continue;
+    }
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -352,6 +395,33 @@ uvmclear(pagetable_t pagetable, uint64 va)
   *pte &= ~PTE_U;
 }
 
+int
+lazyalloc(struct proc *p, uint64 va)
+{
+  char *mem;
+  uint64 a;
+  pte_t *pte;
+  uint flags;
+
+  a = PGROUNDDOWN(va);
+  if(a == 0 || a >= p->sz)
+    return -1;
+
+  pte = walk(p->pagetable, a, 0);
+  if(pte == 0 || (*pte & PTE_V) != 0 || (*pte & PTE_LAZY) == 0)
+    return -1;
+
+  mem = kalloc();
+  if(mem == 0)
+    return -1;
+  memset(mem, 0, PGSIZE);
+
+  flags = (PTE_FLAGS(*pte) & (PTE_R|PTE_W|PTE_X|PTE_U)) | PTE_V;
+  *pte = PA2PTE(mem) | flags;
+  sfence_vma();
+  return 0;
+}
+
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
@@ -360,12 +430,19 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
   pte_t *pte;
+  struct proc *p;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
     if(va0 >= MAXVA)
       return -1;
     pte = walk(pagetable, va0, 0);
+    if(pte && (*pte & PTE_V) == 0 && (*pte & PTE_LAZY) != 0){
+      p = myproc();
+      if(p == 0 || p->pagetable != pagetable || lazyalloc(p, va0) < 0)
+        return -1;
+      pte = walk(pagetable, va0, 0);
+    }
     if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
        (*pte & PTE_W) == 0)
       return -1;

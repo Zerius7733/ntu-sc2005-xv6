@@ -37,6 +37,8 @@ void
 usertrap(void)
 {
   int which_dev = 0;
+  uint64 scause;
+  uint64 stval;
 
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
@@ -49,8 +51,10 @@ usertrap(void)
   
   // save user program counter.
   p->trapframe->epc = r_sepc();
+  scause = r_scause();
+  stval = r_stval();
   
-  if(r_scause() == 8){
+  if(scause == 8){
     // system call
 
     if(killed(p))
@@ -67,9 +71,18 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(scause == 13 || scause == 15){
+    if(lazyalloc(p, stval) < 0){
+      printf("usertrap(): page fault va=0x%lx pid=%d\n", stval, p->pid);
+      printf("            scause=0x%lx sepc=0x%lx\n", scause, r_sepc());
+      setkilled(p);
+    }
   } else {
-    printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+    if(scause == 12)
+      printf("usertrap(): page fault va=0x%lx pid=%d\n", stval, p->pid);
+    else
+      printf("usertrap(): unexpected scause 0x%lx pid=%d\n", scause, p->pid);
+    printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), stval);
     setkilled(p);
   }
 
