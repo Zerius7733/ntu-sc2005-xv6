@@ -434,6 +434,24 @@ wait(uint64 addr)
   }
 }
 
+// Count process-table entries that are currently allocated.
+// Each state is inspected while holding the corresponding process lock.
+int
+countproc(void)
+{
+  int count = 0;
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED)
+      count++;
+    release(&p->lock);
+  }
+
+  return count;
+}
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:

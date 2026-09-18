@@ -22,6 +22,12 @@ sys_getpid(void)
 }
 
 uint64
+sys_getproccount(void)
+{
+  return countproc();
+}
+
+uint64
 sys_fork(void)
 {
   return fork();
