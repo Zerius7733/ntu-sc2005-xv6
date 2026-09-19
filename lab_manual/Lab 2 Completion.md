@@ -17,7 +17,7 @@ The manual's six outcomes are the reason for the process traces, scheduler exper
 
 This section records every source and support-file edit, including the reason for each individual edit.
 
-- `lab_manual/Lab 2 Completion.md`: added this completion record with a learning objective for each numbered task, source locations for the explanations, individual file edits and their purposes, plus a clear account of runtime evidence that still needs to be collected.
+- `lab_manual/Lab 2 Completion.md`: added this completion record with a learning objective for each numbered task, source locations for the explanations, individual file edits and their purposes; updated it with captured QEMU evidence, verification limits, and the local compiler/ISA caveat.
 
 ### Build the supplied scheduler workloads
 
@@ -58,7 +58,7 @@ This section records every source and support-file edit, including the reason fo
 
 ## Task-by-task learning record
 
-Each objective below states what that manual task is trying to teach. These are explanations from the checked source; they are not claims that the manual's runtime observations were captured in this editing session.
+Each objective below states what that manual task is trying to teach. Source-based explanations are distinguished from QEMU observations; any unrun baseline or optional exercise remains identified as such.
 
 ### Before you begin — checkpoint 0
 
@@ -93,7 +93,7 @@ The active branch is `lab2`. The manual asks for a clean one-CPU build and an un
 
 - `kernel/console.c:141-143` handles `Ctrl-p` by calling `procdump()`.
 - `kernel/proc.c:670-697` prints non-`UNUSED` entries as PID, state label, and name. The source comment says it deliberately takes no process locks to avoid wedging a stuck machine, so the listing is a diagnostic snapshot that may observe a changing process table.
-- Runtime checkpoint not captured here: the manual asks the student to save the idle-shell `Ctrl-p` PID/state/name listing. No listing is invented in this record.
+- Captured at the idle shell under the stock scheduler with one CPU: `Ctrl-p` printed PID 1 as `sleep init` and PID 2 as `sleep sh`. This is a point-in-time diagnostic snapshot, not a synchronized process-table query.
 
 ### Part 2 — Modify scheduling and reason about context switching
 
@@ -103,7 +103,7 @@ The active branch is `lab2`. The manual asks for a clean one-CPU build and an un
 
 - The final `kernel/proc.c:445-483` keeps the branch's stock scheduler: it scans process-table slots in order, switches to each `RUNNABLE` entry it encounters, and continues after `swtch()` returns.
 - `user/schedtest.c:5-7` fixes the child count, rounds, and loop work. Its children block on a shared release gate, then perform finite CPU rounds. Their eventual exit permits later progress, so output order alone does not demonstrate an indefinite fairness guarantee.
-- The manual asks for `make CPUS=1 qemu` followed by `schedtest`, with the full output and actual PIDs saved as a baseline. That output was not captured in this session.
+- Captured with `make CPUS=1 qemu` under the stock scheduler: child PIDs were 4 (even), 5 (odd), 6 (even), and 7 (odd). All four completed all four rounds and `schedtest: all children finished` appeared. PID 4 completed first; output from PIDs 5, 6, and 7 interleaved, illustrating progress under the default scan without proving an unbounded fairness guarantee.
 
 #### 2.2 Trace preemption and the scheduler loop
 
@@ -136,10 +136,10 @@ The active branch is `lab2`. The manual asks for a clean one-CPU build and an un
 
 **Learning objective:** compare real baseline/modified runs and use a deliberately endless workload plus `Ctrl-p` observations to distinguish finite postponement from a policy that can starve a process indefinitely.
 
-- `schedtest` is finite; the manual asks to compare actual PIDs and runnable intervals under stock and strict scheduling. No run output or exact execution order is claimed here.
+- `schedtest` is finite. In the one-CPU strict-priority run, child PIDs were 5 (odd), 6 (even), 7 (odd), and 8 (even). The even children (6 and 8) completed all four rounds before either odd child started; then PIDs 5 and 7 completed, and `schedtest: all children finished` appeared. This demonstrates postponement followed by progress once no even child remains runnable.
 - `starvetest` prints the even and odd child PIDs at `user/starvetest.c:58-60`, then releases both into loops at `:42-43`. With `CPUS=1` and strict priority, the even child remains runnable after timer preemption; the odd child can remain listed as `runble` in repeated `Ctrl-p` snapshots. A snapshot may catch it as `run` if the console interrupt arrives while it is executing.
 - Repeated snapshots show postponement during the observation window. The policy and workload explain how postponement can continue indefinitely while the even child remains runnable; finite observation alone cannot prove an infinite runtime event.
-- Required live evidence not captured here: the baseline and strict `schedtest` outputs, the `starvetest` PID line, and two `Ctrl-p` process listings. The manual says to stop `starvetest` by exiting QEMU with `Ctrl-a x`, because the shell may itself be starved.
+- Captured `starvetest` line: `starvetest: even pid 6; odd pid 5`. Both `Ctrl-p` snapshots showed PID 6 as `run`, PID 5 as `runble`, and the parent PID 4 as `sleep`. The two snapshots agreed; they support the expected starvation behavior during the observation window but are not a mathematical proof of infinite starvation.
 - Before Part 3, restore the stock scheduler with `git apply --reverse lab_manual/even_pid_scheduler.patch`; this checkout's final source is already in that stock state.
 
 #### Optional FCFS extension
@@ -183,7 +183,7 @@ The implementation follows the manual's dependency order: context structure in `
 
 - The source-defined checks are in `user/uthread_test.c:8-60`: all three threads must announce startup, each must print values 0 through 99 exactly once, and each must report its count at exit. `thread_schedule()` must eventually report that no runnable user threads remain at `user/uthread.c:69-72`.
 - Startup waits at `user/uthread_test.c:12-13`, `:31-32`, and `:50-51` make every thread wait until the others have started. The circular scan begins after the current slot, so start/count order is a consequence of runnable states and scan position, not a promise that output follows `thread_create()` order.
-- The manual asks for one completed run, comparison with the unmodified baseline, and a repeat run during final verification. Those runtime outputs were not captured here, so no transcript is fabricated.
+- Two final runs completed with the stock scheduler and `CPUS=3`. In both, threads A, B, and C started; each printed every integer from 0 through 99 exactly once; each reported `exit after 100`; `thread_schedule: no runnable threads` appeared; and control returned to the shell. The unmodified starter-code baseline was not run, so the runtime comparison to that baseline remains unverified.
 
 ### Part 4 — Optional GDB exercise
 
@@ -197,20 +197,97 @@ Part 4 is optional and not evaluated. No GDB session was started for this edit. 
 
 The manual's final source state is present: strict-priority code is saved in `lab_manual/even_pid_scheduler.patch`, `kernel/proc.c` contains the original scheduler, the workload commands are included in `UPROGS`, and the user-thread TODOs are implemented.
 
-No build or QEMU run was performed in this Windows checkout. `make`, `qemu-system-riscv64`, `riscv64-unknown-elf-gcc`, and `perl` are not available on `PATH`; the manual's runtime evidence still needs to be collected in the course Linux/VM environment with its RISC-V toolchain and QEMU. The commands requested by the manual are:
+Build and runtime checks were performed in the installed Ubuntu WSL distro (QEMU 10.2.1). The Windows host itself does not expose the Linux toolchain on `PATH`. The available `riscv64-linux-gnu-gcc` defaults to a newer ISA than this QEMU machine supports: its object attributes included the vector extension, and a diagnostic run trapped at `0x80001c50` on `vsetvli` (`scause=0x2`). This was a compiler/CPU ISA mismatch, not a demonstrated scheduler or user-thread defect. Rebuilding every target with `-march=rv64gc -mabi=lp64d` made the kernel boot and the tests below pass; no source or Makefile ISA change was made.
 
 ~~~sh
 make clean
-make CPUS=1 qemu
+make CPUS=3 CC='riscv64-linux-gnu-gcc -march=rv64gc -mabi=lp64d' qemu
 ~~~
 
-Inside xv6, save a stock-scheduler `schedtest` run; apply the patch in a separate run and save another `schedtest` run; run `starvetest`, record its PID line and two `Ctrl-p` listings, and exit QEMU with `Ctrl-a x`. Then reverse the patch, run `make clean`, `make CPUS=3 qemu`, and capture two `uthread_test` runs for the completion and repeatability checks.
+Captured runtime results:
 
-## Final checkpoint: what the six questions are intended to test
+- Stock scheduler, `CPUS=1`: idle-shell `Ctrl-p` showed `1 sleep init` and `2 sleep sh`. `schedtest` created PIDs 4-7, completed all four rounds for every child, and exited normally.
+- Strict even-PID scheduler, `CPUS=1`: after temporarily applying `lab_manual/even_pid_scheduler.patch`, `schedtest` ran even PIDs 6 and 8 through all rounds before odd PIDs 5 and 7, then completed. `starvetest` reported even PID 6 and odd PID 5; two `Ctrl-p` snapshots both showed PID 6 `run` and PID 5 `runble` (parent PID 4 `sleep`). The patch was then reversed.
+- Final clean build, stock scheduler, `CPUS=3`: QEMU booted all three harts. Two `uthread_test` runs passed the checks in Part 3.5, including the exact 0-99 counts, all exit counts of 100, the no-runnable-threads condition, and return to the shell.
+- A direct local TCP serial connection was used to capture the control-key snapshots and repeatable test output; the emulator ran with the same machine, kernel, filesystem image, and CPU counts as the Makefile QEMU target. The final working tree keeps `kernel/proc.c` stock.
 
-1. `procdump()` runs in kernel mode and can access kernel-global `proc[]`; a normal user address space cannot directly dereference that kernel table.
-2. A timer interrupt returns through trap handling, calls `yield()`, changes the process to `RUNNABLE`, and switches to the per-CPU scheduler context. The scheduler later restores that process context.
-3. Under strict even-PID priority, an odd-PID process can starve while an even-PID process remains runnable on the same CPU.
-4. Callee-saved registers preserve values across the switch call; `ra` identifies the continuation and `sp` selects the suspended stack.
-5. A never-run thread restores `ra` to `thread_bootstrap`, restores an aligned private `sp`, and carries its function pointer in `s0` for the bootstrap to call.
-6. The kernel schedules an xv6 process and uses process/kernel contexts and trapframes; the library schedules cooperative user threads within that one process and saves their user-level call contexts.
+The unmodified starter `uthread_test` baseline and optional Part 4 GDB exercise remain unrun. The six final questions below are source-based expected explanations; the runtime evidence relevant to them is recorded above.
+
+## Final checkpoint: expected answers and behavior
+
+The manual's six final questions are answered below as expected explanations from
+the source. The captured runtime observations are recorded separately in the
+verification section above.
+
+1. **Why can `procdump()` read `proc[]` while a normal user program cannot?**
+   `proc[]` is a kernel-global process table. `procdump()` executes in kernel mode
+   (the console's `Ctrl-p` handler calls it), so it can access that table through
+   kernel memory. A normal user process runs with its user page table and cannot
+   directly dereference kernel-only memory; it must use a system call to request
+   information from the kernel. `procdump()` deliberately avoids taking process
+   locks so that debugging a stuck kernel is less likely to wedge it. Therefore,
+   its PID/state/name output is a diagnostic snapshot and can reflect entries
+   changing while it scans them.
+
+2. **How does a timer interrupt lead from a running process to the scheduler and
+   then back into a process?**
+   For a timer interrupt from user execution, the trampoline saves user register
+   state in the process's trapframe and enters `usertrap()`. Trap handling calls
+   `devintr()`; when it identifies a timer, `usertrap()` calls `yield()`. `yield()`
+   holds the process lock, changes the process from `RUNNING` to `RUNNABLE`, and
+   calls `sched()`. `sched()` checks its locking/state invariants and calls
+   `swtch(&p->context, &mycpu()->context)`, saving the process's kernel
+   continuation and restoring the per-CPU scheduler continuation. The scheduler
+   later selects a `RUNNABLE` process, marks it `RUNNING`, sets `c->proc`, and
+   switches back with `swtch(&c->context, &p->context)`. The suspended `sched()`
+   then resumes; after trap handling completes, the return-to-user path restores
+   the user registers from the trapframe. A timer interrupt in kernel execution
+   can also reach `yield()` through `kerneltrap()`; sleep and exit use the same
+   scheduler/context-switch machinery without requiring a timer interrupt.
+
+3. **Under the required strict-priority policy, what workload can starve an odd-PID
+   process?**
+   On one CPU, keep an even-PID process continuously runnable with a CPU-bound
+   loop that does not sleep, block for I/O, or exit. Timer preemption returns that
+   process to `RUNNABLE`; the strict policy selects runnable even PIDs before odd
+   PIDs, so the odd process can remain `RUNNABLE` without being dispatched for an
+   unbounded time. `starvetest` is intended to demonstrate this condition. Its
+   expected observation is the printed even/odd child PID pair and repeated
+   `Ctrl-p` listings in which the even child runs and the odd child remains
+   runnable (a snapshot may catch it running briefly). A finite `schedtest` run
+   can demonstrate postponement and later progress, but cannot establish
+   indefinite starvation. The policy applies to runnable candidates on a CPU; an
+   even-PID process already running on another CPU is not a `RUNNABLE` candidate
+   for this CPU.
+
+4. **Why are callee-saved registers, `ra`, and `sp` sufficient for the supplied
+   cooperative switch?**
+   `thread_switch()` is an ordinary function-call boundary. Under the RISC-V ABI,
+   the callee must preserve `s0`-`s11`; caller-saved argument and temporary
+   registers need not be preserved by the switch routine because the caller must
+   save any such values it needs across the call. `ra` is not callee-saved, but
+   the switch must explicitly save and restore it so `ret` resumes the suspended
+   thread at the correct continuation. It must also save and restore `sp` so each
+   thread resumes on its own stack. The context structure and assembly offsets
+   must agree for every saved register.
+
+5. **How does a never-run user thread begin at its function on its own stack?**
+   `thread_create()` constructs an initial context instead of relying on a prior
+   call to `thread_switch()`: it sets `ra` to `thread_bootstrap`, sets `sp` to the
+   top of that thread's private stack rounded down to a 16-byte boundary, and
+   places the function pointer in `s0`. When selected, `thread_switch()` restores
+   those values and its `ret` enters `thread_bootstrap`. The bootstrap moves the
+   function pointer to the argument register, calls the function, and invokes
+   `thread_exit()` if the function returns. A previously suspended thread instead
+   restores the `ra` and `sp` saved at its earlier switch call.
+
+6. **What is the difference between the kernel scheduling an xv6 process and the
+   library scheduling one of its user threads?**
+   The kernel scheduler selects among separate xv6 processes. Each process has a
+   process-table entry, its own user address space and trapframe, and a saved
+   kernel context; timer interrupts can preempt a process. The user-level library
+   schedules cooperative threads inside one xv6 process. Those threads share the
+   process's address space and kernel process/trapframe, but have separate user
+   stacks and saved user-level call contexts. They switch when library code calls
+   `thread_yield()` or `thread_exit()`; the kernel schedules the containing xv6
+   process, not each user thread separately.
